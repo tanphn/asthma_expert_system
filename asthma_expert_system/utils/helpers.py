@@ -1,73 +1,43 @@
-def input_boolean(prompt):
-    while True:
-        s = input(prompt + " (có/không): ").strip().lower()
-        if s in ("có", "co", "yes", "y"):
-            return True
-        if s in ("không", "khong", "no", "n"):
-            return False
-        print("Vui lòng nhập 'có' hoặc 'không'.")
+# asthma_expert_system/utils/helpers.py
+"""
+Các hàm tiện ích bổ trợ cho Hệ thống Chuyên gia Hen Phế Quản.
+"""
 
-def input_float(prompt, allow_empty=False):
+from typing import Any, Optional
+
+def format_number(val: Any, unit: str = "", default: str = "N/A") -> str:
+    """Định dạng số hiển thị kèm đơn vị."""
+    if val is None or val == 999:
+        return default
+    try:
+        fval = float(val)
+        if fval.is_integer():
+            return f"{int(fval)} {unit}".strip()
+        return f"{fval:.2f} {unit}".strip()
+    except (ValueError, TypeError):
+        return default
+
+def get_badge_html(text: str, bg_color: str = "#3B82F6", text_color: str = "#FFFFFF") -> str:
+    """Tạo badge HTML đẹp mắt cho UI."""
+    return f"""<span style="background-color: {bg_color}; color: {text_color}; padding: 4px 10px; border-radius: 9999px; font-weight: 600; font-size: 0.85rem; display: inline-block; margin: 2px;">{text}</span>"""
+
+def input_boolean_cli(prompt: str) -> bool:
+    """Nhập giá trị boolean an toàn trên giao diện dòng lệnh CLI."""
     while True:
-        s = input(prompt + " (số, để trống nếu không có): ").strip()
+        s = input(f"{prompt} (c/k hoặc y/n): ").strip().lower()
+        if s in ("c", "có", "co", "yes", "y", "1"):
+            return True
+        if s in ("k", "không", "khong", "no", "n", "0"):
+            return False
+        print(">> Vui lòng nhập 'c' (có) hoặc 'k' (không).")
+
+def input_float_cli(prompt: str, allow_empty: bool = True, default: Optional[float] = None) -> Optional[float]:
+    """Nhập giá trị float an toàn trên CLI."""
+    while True:
+        s = input(f"{prompt}: ").strip()
         if s == "" and allow_empty:
-            return None
+            return default
         try:
             return float(s)
         except ValueError:
-            print("Nhập số không đúng. Thử lại.")
-
-def summarize_results(facts, fired_rules):
-    print("\n========================")
-    print("📌 CÁC LUẬT ĐÃ KÍCH HOẠT")
-    print("========================")
-    for r in fired_rules:
-        print(f" - {r}")
-
-    print("\n========================")
-    print("🏁 KẾT LUẬN CUỐI CÙNG")
-    print("========================")
-
-    conclusions = []
-
-    # 1) Chẩn đoán Hen phế quản
-    if facts["f504"]["value"]:
-        conclusions.append("🟢 **Chẩn đoán: Hen phế quản xác định**")
-
-    elif facts["f501"]["value"]:
-        conclusions.append("🟡 **Nghi ngờ hen phế quản (L1 thỏa)** – cần thêm xét nghiệm FEV1/FVC, test hồi phục hoặc kích thích.")
-
-    # 2) Luật L4 (xác định hen khi có thuốc + test)
-    if facts["f504"]["value"] and (facts["f301"]["value"] or facts["f302"]["value"]):
-        conclusions.append("🟢 **Đã điều trị ICS/LABA nhưng triệu chứng còn → phù hợp Hen phế quản.**")
-
-    # 3) Phân biệt bệnh khác (L5-x)
-    diff = {
-        "f509": "COPD",
-        "f510": "Suy tim trái",
-        "f511": "Hẹp/dị vật khí – phế quản",
-        "f512": "GERD hoặc rò khí-thực quản",
-        "f513": "Giãn phế quản"
-    }
-
-    for fid, label in diff.items():
-        if facts[fid]["value"]:
-            conclusions.append(f"🔴 **Có dấu hiệu gợi ý {label}** — cần kiểm tra thêm để loại trừ.")
-
-    # 4) Kiểm soát điều trị (L6, L7)
-    if facts["f506"]["value"]:
-        conclusions.append("⬆ **Hen không kiểm soát → Cần tăng bậc điều trị.**")
-    if facts["f505"]["value"]:
-        conclusions.append("⬇ **Hen kiểm soát tốt → Có thể giảm bậc điều trị.**")
-
-    # 5) Trường hợp không có kết luận
-    if not conclusions:
-        conclusions.append("⚠ **Chưa đủ dữ liệu để đưa ra kết luận rõ ràng.**")
-
-    for c in conclusions:
-        print(" - " + c)
-def auto_compute_logic(facts):
-    symptoms = ["f101", "f102", "f103", "f104"]
-    count = sum(1 for s in symptoms if facts[s]["value"])
-    if count >= 2:
-        facts["f501"]["value"] = True
+            print(">> Giá trị nhập không hợp lệ, vui lòng nhập một số.")

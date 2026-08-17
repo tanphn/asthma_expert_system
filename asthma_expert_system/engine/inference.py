@@ -1,59 +1,125 @@
-# # engine/inference.py
-# class InferenceEngine:
-#     def __init__(self, facts, rules):
-#         self.facts = facts
-#         self.rules = rules
-#         self.fired_rules = []
+# asthma_expert_system/engine/inference.py
+"""
+Động cơ suy diễn Tiến (Forward Chaining Inference Engine) chuẩn cho Hệ thống Chuyên gia.
+Hỗ trợ kiểm tra điều kiện linh hoạt (Callable hoặc Expression AST), ghi vết quy tắc kích hoạt,
+tính toán Certainty Factors và liên kết với Explanation Facility.
+"""
 
-#     def forward_chain(self):
-#         new_inference = True
-#         while new_inference:
-#             new_inference = False
-#             for rule in self.rules:
-#                 if rule["id"] in self.fired_rules:
-#                     continue
-#                 if rule["if"](self.facts):
-#                     for fact_id in rule["then"]:
-#                         if not self.facts[fact_id]["value"]:
-#                             self.facts[fact_id]["value"] = True
-#                             new_inference = True
-#                     self.fired_rules.append(rule["id"])
-def run_rules(facts, rules, verbose=False):
+from typing import List, Dict, Any, Tuple
+from engine.wm import WorkingMemory
+from kb.rules_diagnosis import RULES_DIAGNOSIS
+from kb.rules_severity import RULES_SEVERITY
+from kb.rules_control import RULES_CONTROL
+from kb.rules_treatment import RULES_TREATMENT
+
+class InferenceEngine:
     """
-    Simple forward chaining:
-    - facts: dict of fact_id -> {value, ...}
-    - rules: list of rule dicts with keys: id, if (callable), then (list), desc
-    Returns:
-      fired (list of rule ids fired in order), facts (updated)
+    Động cơ suy diễn tiến (Forward Chaining) thực thi các tập luật theo chu kỳ suy diễn.
     """
-    fired = []
-    changed = True
+    def __init__(self, wm: WorkingMemory, custom_rules: List[Dict[str, Any]] = None):
+        self.wm = wm
+        if custom_rules is not None:
+            self.rules = custom_rules
+        else:
+            self.rules = (
+                RULES_DIAGNOSIS +
+                RULES_SEVERITY +
+                RULES_CONTROL +
+                RULES_TREATMENT
+            )
+        self.fired_rules: List[Dict[str, Any]] = []
+        self.trace_logs: List[str] = []
 
-    # We loop until no change.
-    while changed:
-        changed = False
-        for rule in rules:
-            rid = rule.get("id")
-            # do not re-fire the same rule multiple times (idempotent)
-            if rid in fired:
-                continue
-            try:
-                cond = rule["if"](facts)
-            except Exception as e:
-                # skip rule if error (but print if verbose)
-                if verbose:
-                    print(f"[rule error] {rid}: {e}")
-                cond = False
+    def load_rules(self, rules: List[Dict[str, Any]]):
+        """Tải thêm hoặc thay thế tập luật suy diễn."""
+        self.rules = rules
 
-            if cond:
-                # apply rule
-                for f_id in rule["then"]:
-                    # if fact newly set, record reason and mark changed
-                    if not facts[f_id]["value"]:
-                        facts[f_id]["value"] = True
-                        facts[f_id]["reason"] = rid
-                        changed = True
-                fired.append(rid)
-                if verbose:
-                    print(f"[FIRE] {rid}: {rule.get('desc')}")
-    return fired, facts
+    def forward_chain(self, max_iterations: int = 20, verbose: bool = False) -> Tuple[List[Dict[str, Any]], WorkingMemory]:
+        """
+        Chạy thuật toán suy diễn tiến (Forward Chaining) cho đến khi đạt điểm dừng (không còn luật mới nào được kích hoạt).
+        """
+        self.fired_rules = []
+        self.trace_logs = []
+        already_fired_ids = set()
+
+        iteration = 0
+        changed = True
+
+        if verbose:
+            print(f"[InferenceEngine] Bắt đầu quá trình suy diễn tiến với {len(self.rules)} luật...")
+
+        while changed and iteration < max_iterations:
+            iteration += 1
+            changed = False
+            
+            for rule in self.rules:
+                rid = rule.get("id")
+                if rid in already_fired_ids:
+                    continue
+
+                cond_fn = rule.get("condition_fn")
+                is_satisfied = False
+
+                try:
+                    if callable(cond_fn):
+                        is_satisfied = bool(cond_fn(self.wm))
+                    elif isinstance(cond_fn, str):
+                        # Đảm bảo tương thích nếu có rule dạng chuỗi
+                        is_satisfied = self._eval_expression(cond_fn)
+                except Exception as e:
+                    if verbose:
+                        print(f"[InferenceEngine Error in {rid}]: {e}")
+                    is_satisfied = False
+
+                if is_satisfied:
+                    # Kích hoạt luật
+                    already_fired_ids.add(rid)
+                    consequents = rule.get("consequent_facts", [])
+                    cf = rule.get("cf", 1.0)
+                    rname = rule.get("name", rid)
+                    rdesc = rule.get("condition_desc", "")
+                    rationale = rule.get("rationale", "")
+
+                    fired_record = {
+                        "rule_id": rid,
+                        "name": rname,
+                        "condition_desc": rdesc,
+                        "consequent_facts": consequents,
+                        "cf": cf,
+                        "rationale": rationale,
+                        "iteration": iteration
+                    }
+                    self.fired_rules.append(fired_record)
+
+                    log_msg = f"[KÍCH HOẠT VÒNG {iteration}] {rid}: {rname} -> Kết luận: {', '.join(consequents)}"
+                    self.trace_logs.append(log_msg)
+                    if verbose:
+                        print(log_msg)
+
+                    # Cập nhật facts vào Working Memory
+                    for fid in consequents:
+                        old_val = self.wm.get(fid)
+                        if old_val is not True:
+                            self.wm.set(fid, True, source_rule=rid, cf=cf)
+                            changed = True
+
+        if verbose:
+            print(f"[InferenceEngine] Quá trình suy diễn hoàn tất sau {iteration} vòng lặp. Đã kích hoạt {len(self.fired_rules)} luật.")
+
+        return self.fired_rules, self.wm
+
+    def _eval_expression(self, expr_str: str) -> bool:
+        """Đánh giá biểu thức boolean dạng chuỗi an toàn dựa trên WM."""
+        context = {fid: self.wm.get(fid) for fid in self.wm._facts}
+        try:
+            return bool(eval(expr_str, {"__builtins__": None}, context))
+        except Exception:
+            return False
+
+    def get_fired_rules(self) -> List[Dict[str, Any]]:
+        """Trả về danh sách các luật đã kích hoạt."""
+        return self.fired_rules
+
+    def get_trace_logs(self) -> List[str]:
+        """Trả về nhật ký suy diễn chi tiết."""
+        return self.trace_logs
